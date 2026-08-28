@@ -204,33 +204,55 @@ async function loadCompressedISO() {
         } catch (e) { /* private mode */ }
     }
 
-    setStatus("正在下载压缩镜像...");
+    // ---- 并行分片下载 (Range) ----
+    setStatus("正在并行下载压缩镜像...");
     setProgress(0, "下载中...");
 
-    const resp = await fetch(PRESETS.cdrom_gz_url);
-    if (!resp.ok) throw new Error("ISO 下载失败: " + resp.status);
+    // 先 HEAD 拿总大小
+    const headResp = await fetch(PRESETS.cdrom_gz_url, { method: "HEAD" });
+    const totalBytes = parseInt(headResp.headers.get("content-length"), 10) || 0;
 
-    const total = parseInt(resp.headers.get("content-length"), 10);
-    let loaded = 0;
-    const reader = resp.body.getReader();
-    const chunks = [];
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        loaded += value.length;
-        if (total) {
-            const pct = Math.round((loaded / total) * 100);
-            setProgress(pct, "下载中 " + pct + "%");
-        } else {
-            setProgress(0, "下载中 " + (loaded / 1048576).toFixed(1) + " MB...");
+    if (totalBytes <= 0) throw new Error("无法获取镜像大小");
+    const MAX_CHUNK = 6 * 1024 * 1024; // 每片最大 6MB
+    const numChunks = Math.max(1, Math.min(6, Math.ceil(totalBytes / MAX_CHUNK)));
+    const chunkSize = Math.ceil(totalBytes / numChunks);
+
+    const slices = Array.from({ length: numChunks }, async (_, i) => {
+        const start = i * chunkSize;
+        const end = Math.min(totalBytes - 1, start + chunkSize - 1);
+        const r = await fetch(PRESETS.cdrom_gz_url, {
+            headers: { Range: "bytes=" + start + "-" + end }
+        });
+        if (!r.ok && r.status !== 206) throw new Error("分片 " + i + " 下载失败: " + r.status);
+        return r.arrayBuffer();
+    });
+
+    let loadedBytes = 0;
+    const loadedCtr = new Proxy({ v: 0 }, {
+        set: function(t, k, val) {
+            t[k] = val;
+            const pct = Math.round((val / totalBytes) * 100);
+            setProgress(pct, "并行下载中 " + pct + "%");
+            return true;
         }
+    });
+
+    // 依次 resolve 分片以便统计进度与顺序拼接
+    const resolved = [];
+    let pending = slices;
+    while (pending.length) {
+        const results = await Promise.race(pending.map((p, idx) => p.then(b => ({ idx, b }))));
+        resolved[results.idx] = results.b;
+        loadedBytes += results.b.byteLength;
+        loadedCtr.v = loadedBytes;
+        pending = pending.filter((_, i) => i !== results.idx);
     }
+
+    const compressedBlob = new Blob(resolved);
 
     setStatus("正在解压镜像...");
     setProgress(80, "解压中...");
 
-    const compressedBlob = new Blob(chunks);
     let uncompressedBuffer;
     if (supportsDecompression) {
         const ds = new DecompressionStream("gzip");
