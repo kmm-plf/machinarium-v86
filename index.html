@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Machinarium &middot; v86 Windows XP</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0d0d1a;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            min-height: 100vh;
+        }
+        .topbar {
+            background: linear-gradient(90deg, #1a1a2e, #16213e);
+            border-bottom: 2px solid #f4a259;
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .topbar .title {
+            font-size: 1.3rem;
+            color: #f4a259;
+            letter-spacing: 2px;
+            font-weight: bold;
+        }
+        .topbar .title span { color: #e9c46a; font-size: 0.85rem; letter-spacing: 0; margin-left: 10px; font-weight: normal; }
+        .controls {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .btn {
+            background: rgba(244,162,89,0.15);
+            border: 1px solid #f4a259;
+            color: #f4a259;
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.82rem;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .btn:hover { background: #f4a259; color: #0d0d1a; }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn:disabled:hover { background: rgba(244,162,89,0.15); color: #f4a259; }
+        .main { display: flex; flex-direction: column; align-items: center; padding: 20px; gap: 16px; }
+        .screen-wrap {
+            width: 100%;
+            max-width: 960px;
+            background: #000;
+            border: 2px solid #2a3a5e;
+            border-radius: 12px;
+            overflow: hidden;
+            position: relative;
+            aspect-ratio: 4/3;
+        }
+        #screen { width: 100%; height: 100%; display: block; }
+        .overlay {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(13,13,26,0.92);
+            z-index: 10;
+            gap: 16px;
+            padding: 20px;
+        }
+        .overlay.hidden { display: none; }
+        .overlay .logo { font-size: 2.2rem; color: #f4a259; letter-spacing: 4px; font-weight: bold; }
+        .overlay .logo-cn { font-size: 1rem; color: #e9c46a; letter-spacing: 2px; }
+        .overlay .status { color: #aaa; font-size: 0.9rem; text-align: center; max-width: 400px; line-height: 1.7; }
+        .progress-bar {
+            width: 280px; height: 6px;
+            background: #1e2a4a;
+            border-radius: 3px;
+            overflow: hidden;
+            display: none;
+        }
+        .progress-bar.active { display: block; }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #f4a259, #e9c46a);
+            width: 0%;
+            transition: width 0.3s;
+        }
+        .progress-text { color: #888; font-size: 0.8rem; }
+        .info-bar {
+            width: 100%;
+            max-width: 960px;
+            background: #16213e;
+            border: 1px solid #2a3a5e;
+            border-radius: 8px;
+            padding: 10px 16px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            font-size: 0.8rem;
+            color: #888;
+        }
+        .info-bar .item { display: flex; align-items: center; gap: 6px; }
+        .info-bar .dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
+        .info-bar .dot.ok { background: #4caf50; }
+        .info-bar .dot.warn { background: #f4a259; }
+        .info-bar .dot.err { background: #e57373; }
+        .iso-select { margin-top: 12px; }
+        .iso-select label { color: #aaa; font-size: 0.85rem; margin-right: 8px; }
+        .iso-select select {
+            background: #1e2a4a;
+            border: 1px solid #2a3a5e;
+            color: #e0e0e0;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+        .iso-select select:focus { outline: none; border-color: #f4a259; }
+        .footer { text-align: center; padding: 20px; color: #444; font-size: 0.75rem; }
+        @media (max-width: 600px) {
+            .topbar { padding: 10px 12px; }
+            .topbar .title { font-size: 1rem; }
+            .btn { padding: 5px 10px; font-size: 0.75rem; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="title">MACHINARIUM <span>v86 Windows XP</span></div>
+    <div class="controls">
+        <button class="btn" id="btnPower" onclick="togglePower()">▶ 启动</button>
+        <button class="btn" id="btnReset" onclick="doReset()" disabled>↺ 重置</button>
+        <button class="btn" id="btnFullscreen" onclick="toggleFullscreen()">⛶ 全屏</button>
+        <button class="btn" id="btnSave" onclick="saveState()" disabled>💾 保存状态</button>
+        <button class="btn" id="btnLoad" onclick="loadState()" disabled>📂 加载状态</button>
+        <button class="btn" id="btnEject" onclick="ejectISO()" disabled>📀 弹出 ISO</button>
+    </div>
+</div>
+
+<div class="main">
+    <div class="screen-wrap" id="screenWrap">
+        <canvas id="screen"></canvas>
+        <div class="overlay" id="overlay">
+            <div class="logo">MACHINARIUM</div>
+            <div class="logo-cn">机 械 迷 城</div>
+            <div class="status" id="statusText">点击下方「启动」按钮开始运行 Windows XP 模拟器</div>
+            <div class="progress-bar" id="progressBar"><div class="progress-fill" id="progressFill"></div></div>
+            <div class="progress-text" id="progressText"></div>
+            <div class="iso-select">
+                <label>ISO 镜像：</label>
+                <select id="isoSelect" onchange="onIsoChange()">
+                    <option value="virtualxp">VirtualXP (Windows XP)</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <div class="info-bar">
+        <div class="item"><div class="dot" id="dotCore"></div><span>核心引擎</span></div>
+        <div class="item"><div class="dot" id="dotBIOS"></div><span>BIOS</span></div>
+        <div class="item"><div class="dot" id="dotISO"></div><span>ISO 镜像</span></div>
+        <div class="item"><div class="dot" id="dotEmu"></div><span>模拟器</span></div>
+        <div class="item" style="margin-left:auto;color:#666;" id="timeInfo"></div>
+    </div>
+</div>
+
+<div class="footer">
+    <p>Machinarium &copy; Amanita Design, s.r.o. &middot; v86 Windows XP Emulator &middot; 仅供个人学习研究使用</p>
+</div>
+
+<script type="text/javascript" src="build/libv86.js"></script>
+<script>
+const IFO = {
+    browser_web: true,
+    icons: true,
+    memory_size: 512 * 1024 * 1024,
+    cdrome_image: "",
+    hda_image: "",
+    bios: { url: "bios/seabios.bin" },
+    vga_bios: { url: "bios/vgabios.bin" },
+    screen: { element: document.getElementById("screen") },
+    rtc: { url: "" },
+    init_sync: true,
+};
+
+let emulator = null;
+let isPowered = false;
+
+const isoURLs = {
+    virtualxp: "https://github.com/lrusso/VirtualXP/releases/download/v1.0/VirtualXP.iso",
+};
+
+function setProgress(pct, text) {
+    const bar = document.getElementById("progressBar");
+    const fill = document.getElementById("progressFill");
+    const txt = document.getElementById("progressText");
+    if (pct >= 0) { bar.classList.add("active"); fill.style.width = pct + "%"; txt.textContent = text || ""; }
+    else { bar.classList.remove("active"); txt.textContent = ""; }
+}
+
+function setStatus(text) { document.getElementById("statusText").textContent = text; }
+
+function setDot(id, state) {
+    const dot = document.getElementById(id);
+    dot.className = "dot " + (state === "ok" ? "ok" : state === "warn" ? "warn" : state === "err" ? "err" : "");
+}
+
+function onIsoChange() {
+    const sel = document.getElementById("isoSelect").value;
+    IFO.cdrome_image = isoURLs[sel] || "";
+    document.getElementById("btnEject").disabled = !isPowered;
+}
+
+async function togglePower() {
+    if (isPowered) return;
+    isPowered = true;
+    document.getElementById("btnPower").disabled = true;
+    document.getElementById("btnPower").textContent = "⏳ 运行中";
+    document.getElementById("btnReset").disabled = false;
+    document.getElementById("btnSave").disabled = false;
+    document.getElementById("btnLoad").disabled = false;
+    document.getElementById("btnEject").disabled = false;
+    setDot("dotCore", "ok");
+    setDot("dotBIOS", "ok");
+    setStatus("正在启动模拟器...");
+    setProgress(0, "加载中...");
+
+    const sel = document.getElementById("isoSelect").value;
+    IFO.cdrome_image = isoURLs[sel] || "";
+
+    emulator = new V86({
+        ...IFO,
+        onprogress: function(p, total) {
+            const pct = Math.round((p / total) * 100);
+            setProgress(pct, p + " / " + total);
+        },
+        startup: function() {
+            setDot("dotEmu", "ok");
+            document.getElementById("overlay").classList.add("hidden");
+        },
+        iterator: function(a) {
+            // handle VM output
+        },
+    });
+
+    emulator.add_listener("stop", function() {
+        setDot("dotEmu", "warn");
+        setStatus("模拟器已停止");
+        document.getElementById("btnPower").disabled = false;
+        document.getElementById("btnPower").textContent = "▶ 重新启动";
+        isPowered = false;
+    });
+}
+
+function doReset() {
+    if (emulator) { emulator.stop(); emulator = null; }
+    isPowered = false;
+    document.getElementById("btnPower").disabled = false;
+    document.getElementById("btnPower").textContent = "▶ 启动";
+    document.getElementById("btnReset").disabled = true;
+    document.getElementById("btnSave").disabled = true;
+    document.getElementById("btnLoad").disabled = true;
+    document.getElementById("btnEject").disabled = true;
+    setDot("dotEmu", "");
+    document.getElementById("overlay").classList.remove("hidden");
+    setStatus("点击下方「启动」按钮开始运行 Windows XP 模拟器");
+    setProgress(-1, "");
+}
+
+function toggleFullscreen() {
+    const wrap = document.getElementById("screenWrap");
+    if (!document.fullscreenElement) { wrap.requestFullscreen().catch(()=>{}); }
+    else { document.exitFullscreen(); }
+}
+
+async function saveState() {
+    if (!emulator) return;
+    setStatus("正在保存状态...");
+    setProgress(0, "保存中...");
+    const data = await emulator.save_state();
+    const blob = new Blob([data], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "machinarium_state_" + new Date().toISOString().replace(/[:.]/g,"-") + ".state";
+    a.click();
+    URL.revokeObjectURL(url);
+    setStatus("状态已保存");
+    setProgress(-1, "");
+}
+
+async function loadState() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".state";
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file || !emulator) return;
+        setStatus("正在加载状态...");
+        setProgress(0, "加载中...");
+        const data = await file.arrayBuffer();
+        emulator.restore_state(data);
+        setStatus("状态已加载");
+        setProgress(-1, "");
+    };
+    input.click();
+}
+
+function ejectISO() {
+    if (!emulator) return;
+    emulator.acpi("cdrom_eject");
+    setStatus("ISO 已弹出");
+    setTimeout(() => setStatus("提示：可重新挂载 ISO"), 2000);
+}
+
+setDot("dotCore", "ok");
+setDot("dotBIOS", "ok");
+setProgress(0, "核心就绪");
+setDot("dotISO", "warn");
+setStatus("准备就绪 — 选择 ISO 后点击启动");
+setProgress(-1, "");
+</script>
+
+</body>
+</html>
