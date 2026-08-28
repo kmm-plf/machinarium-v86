@@ -159,8 +159,8 @@
 <script type="text/javascript" src="build/libv86.js"></script>
 <script>
 const PRESETS = {
-    memory_size: 512 * 1024 * 1024,
-    vga_memory_size: 32 * 1024 * 1024,
+    memory_size: 256 * 1024 * 1024,
+    vga_memory_size: 16 * 1024 * 1024,
     bios_path: "bios/seabios.bin",
     vga_bios_path: "bios/vgabios.bin",
     wasm_path: "build/v86.wasm",
@@ -284,18 +284,31 @@ async function togglePower() {
         return;
     }
 
-    emulator = new V86({
-        wasm_path: PRESETS.wasm_path,
-        memory_size: PRESETS.memory_size,
-        vga_memory_size: PRESETS.vga_memory_size,
-        screen_container: document.getElementById("screenWrap"),
-        bios: { url: PRESETS.bios_path },
-        vga_bios: { url: PRESETS.vga_bios_path },
-        cdrom: { buffer: isoBuffer },
-        boot_order: 0x213,
-        autostart: true,
-        network_relay_url: null,
-    });
+    try {
+        emulator = new V86({
+            wasm_path: PRESETS.wasm_path,
+            memory_size: PRESETS.memory_size,
+            vga_memory_size: PRESETS.vga_memory_size,
+            screen_container: document.getElementById("screenWrap"),
+            bios: { url: PRESETS.bios_path },
+            vga_bios: { url: PRESETS.vga_bios_path },
+            cdrom: { buffer: isoBuffer },
+            boot_order: 0x213,
+            autostart: true,
+            network_relay_url: null,
+        });
+    } catch (initErr) {
+        console.error("V86 init failed:", initErr);
+        setStatus("模拟器初始化失败: " + (initErr && initErr.message ? initErr.message : initErr));
+        setProgress(-1, "");
+        setDot("dotEmu", "err");
+        isPowered = false;
+        emulator = null;
+        isoBuffer = null;
+        document.getElementById("btnPower").disabled = false;
+        document.getElementById("btnPower").textContent = "▶ 启动";
+        return;
+    }
 
     emulator.add_listener("emulator-ready", function() {
         setStatus("核心就绪，正在引导...");
