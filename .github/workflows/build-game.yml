@@ -1,0 +1,60 @@
+name: Build Machinarium v86 disk image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y genisoimage file zip gzip
+
+      - name: Download game binaries (release asset v1.1)
+        run: |
+          set -e
+          mkdir -p work/isodir/Machinarium
+          curl -sL -o work/binaries.zip "https://github.com/kmm-plf/machinarium-v86/releases/download/v1.1/machinarium-game-binaries.zip"
+          unzip -o work/binaries.zip -d work/isodir/Machinarium/
+          ls -la work/isodir/Machinarium/
+
+      - name: Build v86-mountable ISO disk image
+        run: |
+          set -e
+          cd work
+          # Create a CD-ROM ISO (raw disk image) that v86 can mount as a second drive
+          genisoimage -quiet -o machinarium.iso -V MACHINARIUM -J -R -V "Machinarium" isodir/
+          file machinarium.iso
+          ls -la machinarium.iso
+          gzip -9 -c machinarium.iso > machinarium.iso.gz
+          ls -la machinarium.iso.gz
+
+      - name: Upload ISO as release asset
+        run: |
+          set -e
+          GER_REPO="kmm-plf/machinarium-v86"
+          RELEASE_ID=$(curl -s -H "Authorization: Bearer ${{ github.token }}" \
+            "https://api.github.com/repos/${GER_REPO}/releases/tags/v1.1" | jq -r .id)
+          echo "release_id=${RELEASE_ID}"
+          curl -sL -X POST \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@work/machinarium.iso.gz" \
+            "https://uploads.github.com/repos/${GER_REPO}/releases/${RELEASE_ID}/assets?name=machinarium.iso.gz" \
+            | jq -r '"uploaded: " + .name + " size=" + (.size|tostring)'
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: machinarium.iso.gz
+          path: work/machinarium.iso.gz
