@@ -110,18 +110,6 @@
         .info-bar .dot.ok { background: #4caf50; }
         .info-bar .dot.warn { background: #f4a259; }
         .info-bar .dot.err { background: #e57373; }
-        .iso-select { margin-top: 12px; }
-        .iso-select label { color: #aaa; font-size: 0.85rem; margin-right: 8px; }
-        .iso-select select {
-            background: #1e2a4a;
-            border: 1px solid #2a3a5e;
-            color: #e0e0e0;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-size: 0.85rem;
-            cursor: pointer;
-        }
-        .iso-select select:focus { outline: none; border-color: #f4a259; }
         .footer { text-align: center; padding: 20px; color: #444; font-size: 0.75rem; }
         @media (max-width: 600px) {
             .topbar { padding: 10px 12px; }
@@ -140,7 +128,6 @@
         <button class="btn" id="btnFullscreen" onclick="toggleFullscreen()">⛶ 全屏</button>
         <button class="btn" id="btnSave" onclick="saveState()" disabled>💾 保存状态</button>
         <button class="btn" id="btnLoad" onclick="loadState()" disabled>📂 加载状态</button>
-        <button class="btn" id="btnEject" onclick="ejectISO()" disabled>📀 弹出 ISO</button>
     </div>
 </div>
 
@@ -153,12 +140,6 @@
             <div class="status" id="statusText">点击下方「启动」按钮开始运行 Windows XP 模拟器</div>
             <div class="progress-bar" id="progressBar"><div class="progress-fill" id="progressFill"></div></div>
             <div class="progress-text" id="progressText"></div>
-            <div class="iso-select">
-                <label>ISO 镜像：</label>
-                <select id="isoSelect" onchange="onIsoChange()">
-                    <option value="virtualxp">VirtualXP (Windows XP)</option>
-                </select>
-            </div>
         </div>
     </div>
 
@@ -177,25 +158,19 @@
 
 <script type="text/javascript" src="build/libv86.js"></script>
 <script>
-const IFO = {
-    browser_web: true,
-    icons: true,
+const PRESETS = {
     memory_size: 512 * 1024 * 1024,
-    cdrome_image: "",
-    hda_image: "",
-    bios: { url: "bios/seabios.bin" },
-    vga_bios: { url: "bios/vgabios.bin" },
-    screen: { element: document.getElementById("screen") },
-    rtc: { url: "" },
-    init_sync: true,
+    vga_memory_size: 32 * 1024 * 1024,
+    bios_path: "bios/seabios.bin",
+    vga_bios_path: "bios/vgabios.bin",
+    wasm_path: "build/v86.wasm",
+    cdrom_gz_url: "VirtualXP.iso.gz",
+    cdrom_decompressed_url: "VirtualXP.iso",
 };
 
 let emulator = null;
 let isPowered = false;
-
-const isoURLs = {
-    virtualxp: "https://github.com/lrusso/VirtualXP/releases/download/v1.0/VirtualXP.iso",
-};
+let isoBuffer = null;
 
 function setProgress(pct, text) {
     const bar = document.getElementById("progressBar");
@@ -212,10 +187,71 @@ function setDot(id, state) {
     dot.className = "dot " + (state === "ok" ? "ok" : state === "warn" ? "warn" : state === "err" ? "err" : "");
 }
 
-function onIsoChange() {
-    const sel = document.getElementById("isoSelect").value;
-    IFO.cdrome_image = isoURLs[sel] || "";
-    document.getElementById("btnEject").disabled = !isPowered;
+async function loadCompressedISO() {
+    const cacheName = "machinarium-v86-assets-v1";
+    const supportsCache = "caches" in window;
+    const supportsDecompression = "DecompressionStream" in window;
+
+    if (supportsCache) {
+        try {
+            const cache = await window.caches.open(cacheName);
+            const cached = await cache.match(PRESETS.cdrom_decompressed_url);
+            if (cached) {
+                setStatus("从缓存加载 ISO（秒开）...");
+                setProgress(100, "缓存命中");
+                return await cached.arrayBuffer();
+            }
+        } catch (e) { /* private mode */ }
+    }
+
+    setStatus("正在下载压缩镜像...");
+    setProgress(0, "下载中...");
+
+    const resp = await fetch(PRESETS.cdrom_gz_url);
+    if (!resp.ok) throw new Error("ISO 下载失败: " + resp.status);
+
+    const total = parseInt(resp.headers.get("content-length"), 10);
+    let loaded = 0;
+    const reader = resp.body.getReader();
+    const chunks = [];
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        loaded += value.length;
+        if (total) {
+            const pct = Math.round((loaded / total) * 100);
+            setProgress(pct, "下载中 " + pct + "%");
+        } else {
+            setProgress(0, "下载中 " + (loaded / 1048576).toFixed(1) + " MB...");
+        }
+    }
+
+    setStatus("正在解压镜像...");
+    setProgress(80, "解压中...");
+
+    const compressedBlob = new Blob(chunks);
+    let uncompressedBuffer;
+    if (supportsDecompression) {
+        const ds = new DecompressionStream("gzip");
+        const stream = compressedBlob.stream().pipeThrough(ds);
+        const decompressedResp = new Response(stream);
+        uncompressedBuffer = await decompressedResp.arrayBuffer();
+    } else {
+        throw new Error("浏览器不支持 gzip 解压，请使用 Chrome/Edge/Firefox 最新版");
+    }
+
+    if (supportsCache) {
+        try {
+            const cache = await window.caches.open(cacheName);
+            await cache.put(PRESETS.cdrom_decompressed_url, new Response(uncompressedBuffer, {
+                headers: { "Content-Length": uncompressedBuffer.byteLength.toString() }
+            }));
+        } catch (e) { /* quota exceeded */ }
+    }
+
+    setProgress(100, "下载完成");
+    return uncompressedBuffer;
 }
 
 async function togglePower() {
@@ -226,48 +262,83 @@ async function togglePower() {
     document.getElementById("btnReset").disabled = false;
     document.getElementById("btnSave").disabled = false;
     document.getElementById("btnLoad").disabled = false;
-    document.getElementById("btnEject").disabled = false;
     setDot("dotCore", "ok");
     setDot("dotBIOS", "ok");
+    setDot("dotISO", "warn");
     setStatus("正在启动模拟器...");
     setProgress(0, "加载中...");
 
-    const sel = document.getElementById("isoSelect").value;
-    IFO.cdrome_image = isoURLs[sel] || "";
+    try {
+        isoBuffer = await loadCompressedISO();
+        setDot("dotISO", "ok");
+        setStatus("正在初始化模拟器...");
+        setProgress(90, "初始化中...");
+    } catch (e) {
+        console.error(e);
+        setStatus("ISO 加载失败: " + e.message);
+        setProgress(-1, "");
+        setDot("dotISO", "err");
+        isPowered = false;
+        document.getElementById("btnPower").disabled = false;
+        document.getElementById("btnPower").textContent = "▶ 启动";
+        return;
+    }
 
     emulator = new V86({
-        ...IFO,
-        onprogress: function(p, total) {
-            const pct = Math.round((p / total) * 100);
-            setProgress(pct, p + " / " + total);
-        },
-        startup: function() {
-            setDot("dotEmu", "ok");
-            document.getElementById("overlay").classList.add("hidden");
-        },
-        iterator: function(a) {
-            // handle VM output
-        },
+        wasm_path: PRESETS.wasm_path,
+        memory_size: PRESETS.memory_size,
+        vga_memory_size: PRESETS.vga_memory_size,
+        screen_container: document.getElementById("screenWrap"),
+        bios: { url: PRESETS.bios_path },
+        vga_bios: { url: PRESETS.vga_bios_path },
+        cdrom: { buffer: isoBuffer },
+        boot_order: 0x213,
+        autostart: true,
+        network_relay_url: null,
+    });
+
+    emulator.add_listener("emulator-ready", function() {
+        setStatus("核心就绪，正在引导...");
+        setProgress(95, "引导中...");
+    });
+
+    emulator.add_listener("emulator-started", function() {
+        setDot("dotEmu", "ok");
+        setProgress(100, "系统运行中");
+        document.getElementById("overlay").classList.add("hidden");
+        if (emulator.audio_adapter) emulator.audio_adapter.init();
+    });
+
+    emulator.add_listener("download-progress", function(e) {
+        if (e.total && e.total > 0) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            setProgress(pct, e.file_name + " " + pct + "%");
+        }
     });
 
     emulator.add_listener("stop", function() {
         setDot("dotEmu", "warn");
         setStatus("模拟器已停止");
+        document.getElementById("overlay").classList.remove("hidden");
         document.getElementById("btnPower").disabled = false;
         document.getElementById("btnPower").textContent = "▶ 重新启动";
         isPowered = false;
+    });
+
+    document.getElementById("screenWrap").addEventListener("mousedown", function() {
+        emulator.lock_mouse();
     });
 }
 
 function doReset() {
     if (emulator) { emulator.stop(); emulator = null; }
     isPowered = false;
+    isoBuffer = null;
     document.getElementById("btnPower").disabled = false;
     document.getElementById("btnPower").textContent = "▶ 启动";
     document.getElementById("btnReset").disabled = true;
     document.getElementById("btnSave").disabled = true;
     document.getElementById("btnLoad").disabled = true;
-    document.getElementById("btnEject").disabled = true;
     setDot("dotEmu", "");
     document.getElementById("overlay").classList.remove("hidden");
     setStatus("点击下方「启动」按钮开始运行 Windows XP 模拟器");
@@ -296,35 +367,35 @@ async function saveState() {
     setProgress(-1, "");
 }
 
-async function loadState() {
+function loadState() {
+    if (!emulator) return;
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".state";
     input.onchange = async (e) => {
         const file = e.target.files[0];
-        if (!file || !emulator) return;
+        if (!file) return;
         setStatus("正在加载状态...");
         setProgress(0, "加载中...");
         const data = await file.arrayBuffer();
-        emulator.restore_state(data);
-        setStatus("状态已加载");
-        setProgress(-1, "");
+        try {
+            await emulator.restore_state(data);
+            setStatus("状态已加载");
+            setProgress(-1, "");
+            if (emulator.audio_adapter) emulator.audio_adapter.init();
+        } catch (err) {
+            setStatus("加载失败: " + err.message);
+            setProgress(-1, "");
+        }
     };
     input.click();
-}
-
-function ejectISO() {
-    if (!emulator) return;
-    emulator.acpi("cdrom_eject");
-    setStatus("ISO 已弹出");
-    setTimeout(() => setStatus("提示：可重新挂载 ISO"), 2000);
 }
 
 setDot("dotCore", "ok");
 setDot("dotBIOS", "ok");
 setProgress(0, "核心就绪");
 setDot("dotISO", "warn");
-setStatus("准备就绪 — 选择 ISO 后点击启动");
+setStatus("准备就绪 — 点击「启动」加载镜像");
 setProgress(-1, "");
 </script>
 
