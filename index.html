@@ -254,6 +254,24 @@ async function loadCompressedISO() {
     return uncompressedBuffer;
 }
 
+let isoPromise = null;
+function ensureISO() {
+    if (!isoPromise) {
+        isoPromise = loadCompressedISO();
+        isoPromise.catch(function() { isoPromise = null; });
+    }
+    return isoPromise;
+}
+
+// 页面打开即后台预热：静默下载+解压+缓存 ISO，点启动时已就绪则秒开
+function preloadInBackground() {
+    if (!("caches" in window) || !("DecompressionStream" in window)) return;
+    setStatus("正在后台准备游戏数据（首次仅一次，之后秒开）...");
+    ensureISO().finally(function() {
+        setStatus("准备就绪 — 点击「启动」即可开始");
+    }).catch(function() {});
+}
+
 async function togglePower() {
     if (isPowered) return;
     isPowered = true;
@@ -269,7 +287,7 @@ async function togglePower() {
     setProgress(0, "加载中...");
 
     try {
-        isoBuffer = await loadCompressedISO();
+        isoBuffer = await ensureISO();
         setDot("dotISO", "ok");
         setStatus("正在初始化模拟器...");
         setProgress(90, "初始化中...");
@@ -408,8 +426,9 @@ setDot("dotCore", "ok");
 setDot("dotBIOS", "ok");
 setProgress(0, "核心就绪");
 setDot("dotISO", "warn");
-setStatus("准备就绪 — 点击「启动」加载镜像");
+setStatus("准备就绪 — 自动预载镜像中，稍后可随时点击「启动」");
 setProgress(-1, "");
+preloadInBackground();
 </script>
 
 </body>
